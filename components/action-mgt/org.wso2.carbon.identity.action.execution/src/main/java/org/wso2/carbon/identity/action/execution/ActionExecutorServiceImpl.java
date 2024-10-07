@@ -40,7 +40,7 @@ import org.wso2.carbon.identity.action.execution.model.AllowedOperation;
 import org.wso2.carbon.identity.action.execution.model.PerformableOperation;
 import org.wso2.carbon.identity.action.execution.model.Request;
 import org.wso2.carbon.identity.action.execution.util.APIClient;
-import org.wso2.carbon.identity.action.execution.util.ActionExecutionConstants;
+import org.wso2.carbon.identity.action.execution.util.ActionExecutionLogConstants;
 import org.wso2.carbon.identity.action.execution.util.ActionExecutorConfig;
 import org.wso2.carbon.identity.action.execution.util.AuthMethods;
 import org.wso2.carbon.identity.action.execution.util.OperationComparator;
@@ -104,8 +104,8 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
             validateActions(actions, actionType);
             if (LoggerUtils.isDiagnosticLogsEnabled()) {
                 DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                        ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                        ActionExecutionConstants.LogConstants.ActionIDs.EXECUTE_ACTION);
+                        ActionExecutionLogConstants.ACTION_EXECUTION,
+                        ActionExecutionLogConstants.ActionIDs.EXECUTE_ACTION);
                 diagLogBuilder
                         .resultMessage(actionType + " action execution is initiated.")
                         .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
@@ -117,13 +117,12 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
             Action action = actions.get(0);
             return execute(action, eventContext);
         } catch (ActionExecutionRuntimeException e) {
-            // todo: add to diagnostics
             if (LoggerUtils.isDiagnosticLogsEnabled()) {
                 DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                        ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                        ActionExecutionConstants.LogConstants.ActionIDs.EXECUTE_ACTION);
+                        ActionExecutionLogConstants.ACTION_EXECUTION,
+                        ActionExecutionLogConstants.ActionIDs.EXECUTE_ACTION);
                 diagLogBuilder
-                        .resultMessage("Skip executing actions for " + actionType + " type.")
+                        .resultMessage("Skip executing action for " + actionType + " type.")
                         .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
                         .resultStatus(DiagnosticLog.ResultStatus.FAILED)
                         .build();
@@ -148,16 +147,28 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
 
         validateActionIdList(actionType, actionIdList);
         Action action = getActionByActionId(actionType, actionIdList[0], tenantDomain);
+        if (LoggerUtils.isDiagnosticLogsEnabled()) {
+            DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
+                    ActionExecutionLogConstants.ACTION_EXECUTION,
+                    ActionExecutionLogConstants.ActionIDs.EXECUTE_ACTION);
+            diagLogBuilder
+                    .resultMessage(actionType + " action execution is initiated.")
+                    .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
+                    .resultStatus(DiagnosticLog.ResultStatus.SUCCESS)
+                    .build();
+            LoggerUtils.triggerDiagnosticLogEvent(diagLogBuilder);
+        }
         try {
             return execute(action, eventContext);
         } catch (ActionExecutionRuntimeException e) {
-            // todo: add to diagnostics
             if (LoggerUtils.isDiagnosticLogsEnabled()) {
                 DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                        ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                        ActionExecutionConstants.LogConstants.ActionIDs.EXECUTE_ACTION);
+                        ActionExecutionLogConstants.ACTION_EXECUTION,
+                        ActionExecutionLogConstants.ActionIDs.EXECUTE_ACTION);
                 diagLogBuilder
-                        .resultMessage("Skip executing actions for " + actionType + " type.")
+                        .configParam("action id", action.getId())
+                        .configParam("action name", action.getName())
+                        .resultMessage("Skip executing action for " + actionType + " type.")
                         .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
                         .resultStatus(DiagnosticLog.ResultStatus.FAILED)
                         .build();
@@ -306,11 +317,10 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
 
     private void logActionRequest(Action action, String payload) {
 
-        //todo: Add to diagnostics
         if (LoggerUtils.isDiagnosticLogsEnabled()) {
             DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                    ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                    ActionExecutionConstants.LogConstants.ActionIDs.PROCESS_ACTION_REQUEST);
+                    ActionExecutionLogConstants.ACTION_EXECUTION,
+                    ActionExecutionLogConstants.ActionIDs.PROCESS_ACTION_REQUEST);
             diagLogBuilder
                     .configParam("action id", action.getId())
                     .configParam("action type", action.getType().getActionType())
@@ -369,7 +379,6 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
             throws ActionExecutionResponseProcessorException {
 
         if (LOG.isDebugEnabled()) {
-            // todo: add to diagnostic logs
             logSuccessResponse(action, successResponse);
         }
 
@@ -414,8 +423,8 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
             String responseBody = serializeSuccessResponse(successResponse);
             if (LoggerUtils.isDiagnosticLogsEnabled()) {
                 DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                        ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                        ActionExecutionConstants.LogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
+                        ActionExecutionLogConstants.ACTION_EXECUTION,
+                        ActionExecutionLogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
                 diagLogBuilder
                         .configParam("action id", action.getId())
                         .configParam("action type", action.getType().getActionType())
@@ -446,13 +455,12 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
     private void logErrorResponse(Action action, ActionInvocationErrorResponse errorResponse) {
 
         if (LOG.isDebugEnabled()) {
-            // todo: add to diagnostic logs
             try {
                 String responseBody = serializeErrorResponse(errorResponse);
                 if (LoggerUtils.isDiagnosticLogsEnabled()) {
                     DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                            ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                            ActionExecutionConstants.LogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
+                            ActionExecutionLogConstants.ACTION_EXECUTION,
+                            ActionExecutionLogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
                     diagLogBuilder
                             .configParam("action id", action.getId())
                             .configParam("action type", action.getType().getActionType())
@@ -485,13 +493,12 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
     private void logFailureResponse(Action action, ActionInvocationFailureResponse failureResponse) {
 
         if (LOG.isDebugEnabled()) {
-            // todo: add to diagnostic logs
             try {
                 String responseBody = serializeFailureResponse(failureResponse);
                 if (LoggerUtils.isDiagnosticLogsEnabled()) {
                     DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                            ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                            ActionExecutionConstants.LogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
+                            ActionExecutionLogConstants.ACTION_EXECUTION,
+                            ActionExecutionLogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
                     diagLogBuilder
                             .configParam("action id", action.getId())
                             .configParam("action type", action.getType().getActionType())
@@ -522,11 +529,10 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
     }
 
     private void logErrorResponse(Action action, ActionInvocationResponse actionInvocationResponse) {
-        // todo: add to diagnostic logs
         if (LoggerUtils.isDiagnosticLogsEnabled()) {
             DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                    ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                    ActionExecutionConstants.LogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
+                    ActionExecutionLogConstants.ACTION_EXECUTION,
+                    ActionExecutionLogConstants.ActionIDs.RECEIVE_ACTION_RESPONSE);
             diagLogBuilder
                     .configParam("action id", action.getId())
                     .configParam("action type", action.getType().getActionType())
@@ -591,7 +597,6 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
                                 performableOperation)))
                 .collect(Collectors.toList());
 
-            // todo: add to diagnostics
             if (LOG.isDebugEnabled() || LoggerUtils.isDiagnosticLogsEnabled()) {
                 List<String> allowedOps = new ArrayList<>();
                 List<String> notAllowedOps = new ArrayList<>();
@@ -604,12 +609,10 @@ public class ActionExecutorServiceImpl implements ActionExecutorService {
                         notAllowedOps.add(operationDetails);
                     }
                 });
-                LOG.debug("Allowed Operations: " + String.join(", ", allowedOps) +
-                        ". Not Allowed Operations: " + String.join(", ", notAllowedOps));
                 if (LoggerUtils.isDiagnosticLogsEnabled()) {
                     DiagnosticLog.DiagnosticLogBuilder diagLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                            ActionExecutionConstants.LogConstants.ACTION_EXECUTION,
-                            ActionExecutionConstants.LogConstants.ActionIDs.VALIDATE_ACTION_OPERATIONS);
+                            ActionExecutionLogConstants.ACTION_EXECUTION,
+                            ActionExecutionLogConstants.ActionIDs.VALIDATE_ACTION_OPERATIONS);
                     diagLogBuilder
                             .configParam("action id", action.getId())
                             .configParam("action type", action.getType().getActionType())
