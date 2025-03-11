@@ -51,6 +51,8 @@ public class Constants {
         ERROR_CODE_GET_REG_GRAPH_FAILED("65006", "Error while retrieving the registration graph.",
                                         "Unexpected server error while retrieving the registration graph for tenant, " +
                                                 "%s"),
+        ERROR_CODE_GET_FIRST_STEP_ID("65007", "Error while retrieving the first step id.",
+                                    "Unexpected server error while retrieving the first step id for tenant, %s"),
 
         // Client errors.
         ERROR_CODE_UNSUPPORTED_STEP_TYPE("60001", "Unsupported step type.",
@@ -133,6 +135,7 @@ public class Constants {
 
         public static final String VIEW = "VIEW";
         public static final String REDIRECTION = "REDIRECTION";
+        public static final String USER_ONBOARD = "USER_ONBOARD";
 
         private StepTypes() {
 
