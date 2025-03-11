@@ -18,23 +18,34 @@
 
 package org.wso2.carbon.identity.action.management.internal.dao.impl;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.wso2.carbon.database.utils.jdbc.NamedJdbcTemplate;
 import org.wso2.carbon.database.utils.jdbc.NamedPreparedStatement;
 import org.wso2.carbon.database.utils.jdbc.exceptions.TransactionException;
 import org.wso2.carbon.identity.action.management.api.exception.ActionMgtException;
+import org.wso2.carbon.identity.action.management.api.exception.ActionMgtRuntimeException;
 import org.wso2.carbon.identity.action.management.api.exception.ActionMgtServerException;
 import org.wso2.carbon.identity.action.management.api.model.Action;
 import org.wso2.carbon.identity.action.management.api.model.ActionDTO;
+import org.wso2.carbon.identity.action.management.api.model.ActionProperty;
+import org.wso2.carbon.identity.action.management.api.model.ActionPropertyForData;
 import org.wso2.carbon.identity.action.management.api.model.ActionRule;
 import org.wso2.carbon.identity.action.management.api.model.AuthProperty;
 import org.wso2.carbon.identity.action.management.api.model.Authentication;
 import org.wso2.carbon.identity.action.management.api.model.EndpointConfig;
+import org.wso2.carbon.identity.action.management.api.model.InputStreamWrapper;
 import org.wso2.carbon.identity.action.management.internal.constant.ActionMgtSQLConstants;
 import org.wso2.carbon.identity.action.management.internal.dao.ActionManagementDAO;
 import org.wso2.carbon.identity.action.management.internal.util.ActionDTOBuilder;
 import org.wso2.carbon.identity.core.util.IdentityDatabaseUtil;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -82,7 +93,7 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
             try (ResultSet rs = statement.executeQuery()) {
                 while (rs.next()) {
                     String actionId = rs.getString(ActionMgtSQLConstants.Column.ACTION_UUID);
-                    Map<String, String> properties = getActionPropertiesFromDB(actionId, tenantId);
+                    Map<String, ActionPropertyForData> properties = getActionPropertiesFromDB(actionId, tenantId);
                     ActionDTO actionDTO = new ActionDTOBuilder()
                             .id(actionId)
                             .type(Action.ActionTypes.valueOf(
@@ -94,7 +105,18 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
                             .endpoint(populateEndpoint(properties))
                             .rule(populateRule(properties, tenantId))
                             .properties(properties.entrySet().stream()
-                                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+                                    .collect(Collectors.toMap(Map.Entry::getKey,
+                                            entry -> {
+                                                ActionPropertyForData property = entry.getValue();
+                                                if (property.getType() == ActionProperty.Type.PRIMITIVE) {
+                                                    return property.getValue().toString();
+                                                } else if (property.getType() == ActionProperty.Type.OBJECT) {
+                                                    // Convert InputStream to String List
+                                                    return getListValueFromInputStream(((InputStreamWrapper)
+                                                            property.getValue()).getValue());
+                                                }
+                                                return property.getValue();
+                                            })))
                             .build();
 
                     actionDTOS.add(actionDTO);
@@ -117,11 +139,22 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
             return null;
         }
 
-        Map<String, String> actionProperties = getActionPropertiesFromDB(actionId, tenantId);
+        Map<String, ActionPropertyForData> actionProperties = getActionPropertiesFromDB(actionId, tenantId);
         actionBuilder.endpoint(populateEndpoint(actionProperties));
         actionBuilder.rule(populateRule(actionProperties, tenantId));
         actionBuilder.properties(actionProperties.entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        entry -> {
+                            ActionPropertyForData property = entry.getValue();
+                            if (property.getType() == ActionProperty.Type.PRIMITIVE) {
+                                return property.getValue().toString();
+                            } else if (property.getType() == ActionProperty.Type.OBJECT) {
+                                // Convert InputStream to String List
+                                return getListValueFromInputStream(((InputStreamWrapper) property.getValue())
+                                        .getValue());
+                            }
+                            return property.getValue();
+                        })));
         return actionBuilder.build();
     }
 
@@ -183,7 +216,8 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
                         actionTypesCountMap.put(resultSet.getString(ActionMgtSQLConstants.Column.ACTION_TYPE),
                                 resultSet.getInt(ActionMgtSQLConstants.Column.ACTION_COUNT));
                         return null;
-                    }, statement -> statement.setInt(ActionMgtSQLConstants.Column.TENANT_ID, tenantId)));
+                    }, statement -> statement.setInt(ActionMgtSQLConstants.Column.TENANT_ID,
+                                tenantId)));
             return actionTypesCountMap;
         } catch (TransactionException e) {
             throw new ActionMgtServerException("Error while retrieving Actions count per Action Type from the system.",
@@ -302,13 +336,14 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
     private void addEndpoint(ActionDTO actionDTO, Integer tenantId) throws ActionMgtException {
 
         EndpointConfig endpoint = actionDTO.getEndpoint();
-        Map<String, String> endpointProperties = new HashMap<>();
+        Map<String, ActionPropertyForData> endpointProperties = new HashMap<>();
         try {
-            endpointProperties.put(URI_PROPERTY, endpoint.getUri());
-            endpointProperties.put(AUTHN_TYPE_PROPERTY, endpoint.getAuthentication().getType().name());
+            endpointProperties.put(URI_PROPERTY, new ActionPropertyForData(endpoint.getUri()));
+            endpointProperties.put(AUTHN_TYPE_PROPERTY, new ActionPropertyForData(endpoint.getAuthentication().getType()
+                    .name()));
             endpoint.getAuthentication().getProperties().forEach(
-                    authProperty -> endpointProperties.put(authProperty.getName(), authProperty.getValue()));
-
+                    authProperty -> endpointProperties.put(authProperty.getName(),
+                            new ActionPropertyForData(authProperty.getValue())));
             addActionPropertiesToDB(actionDTO.getId(), endpointProperties, tenantId);
         } catch (TransactionException e) {
             throw new ActionMgtServerException("Error while adding Action Endpoint configurations in the system.", e);
@@ -334,7 +369,8 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         try {
             if (updatingEndpoint.getUri() != null) {
                 updateActionPropertiesInDB(updatingActionDTO.getId(),
-                        Collections.singletonMap(URI_PROPERTY, updatingEndpoint.getUri()), tenantId);
+                        Collections.singletonMap(URI_PROPERTY, new ActionPropertyForData(updatingEndpoint.getUri())),
+                        tenantId);
             }
 
             updateEndpointAuthentication(updatingActionDTO.getId(), updatingEndpoint.getAuthentication(),
@@ -344,25 +380,28 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         }
     }
 
-    private EndpointConfig populateEndpoint(Map<String, String> propertiesFromDB) throws ActionMgtException {
+    private EndpointConfig populateEndpoint(Map<String, ActionPropertyForData> propertiesFromDB)
+            throws ActionMgtException {
 
         Authentication authentication;
         Authentication.Type authnType =
-                Authentication.Type.valueOfName(propertiesFromDB.remove(AUTHN_TYPE_PROPERTY));
+                Authentication.Type.valueOfName(propertiesFromDB.remove(AUTHN_TYPE_PROPERTY).getValue().toString());
         switch (authnType) {
             case BASIC:
                 authentication = new Authentication.BasicAuthBuilder(
-                        propertiesFromDB.remove(Authentication.Property.USERNAME.getName()),
-                        propertiesFromDB.remove(Authentication.Property.PASSWORD.getName())).build();
+                        propertiesFromDB.remove(Authentication.Property.USERNAME.getName()).getValue().toString(),
+                        propertiesFromDB.remove(Authentication.Property.PASSWORD.getName()).getValue().toString())
+                        .build();
                 break;
             case BEARER:
                 authentication = new Authentication.BearerAuthBuilder(
-                        propertiesFromDB.remove(Authentication.Property.ACCESS_TOKEN.getName())).build();
+                        propertiesFromDB.remove(Authentication.Property.ACCESS_TOKEN.getName()).getValue().toString())
+                        .build();
                 break;
             case API_KEY:
                 authentication = new Authentication.APIKeyAuthBuilder(
-                        propertiesFromDB.remove(Authentication.Property.HEADER.getName()),
-                        propertiesFromDB.remove(Authentication.Property.VALUE.getName())).build();
+                        propertiesFromDB.remove(Authentication.Property.HEADER.getName()).getValue().toString(),
+                        propertiesFromDB.remove(Authentication.Property.VALUE.getName()).getValue().toString()).build();
                 break;
             case NONE:
                 authentication = new Authentication.NoneAuthBuilder().build();
@@ -372,7 +411,7 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         }
 
         return new EndpointConfig.EndpointConfigBuilder()
-                .uri(propertiesFromDB.remove(URI_PROPERTY))
+                .uri(propertiesFromDB.remove(URI_PROPERTY).getValue().toString())
                 .authentication(authentication)
                 .build();
     }
@@ -417,11 +456,13 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
      * @throws TransactionException If an error occurs while adding action authentication.
      */
     private void addAuthentication(String actionId, Authentication updatingAuthentication, Integer tenantId)
-            throws TransactionException {
+            throws TransactionException, ActionMgtException {
 
-        Map<String, String> authenticationProperties = updatingAuthentication.getProperties().stream()
-                .collect(Collectors.toMap(AuthProperty::getName, AuthProperty::getValue));
-        authenticationProperties.put(AUTHN_TYPE_PROPERTY, updatingAuthentication.getType().name());
+        Map<String, ActionPropertyForData> authenticationProperties = updatingAuthentication.getProperties().stream()
+                .collect(Collectors.toMap(AuthProperty::getName, authProp ->
+                        new ActionPropertyForData(authProp.getValue())));
+        authenticationProperties.put(AUTHN_TYPE_PROPERTY, new ActionPropertyForData(updatingAuthentication.getType()
+                .name()));
 
         addActionPropertiesToDB(actionId, authenticationProperties, tenantId);
     }
@@ -454,11 +495,13 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
      * @throws TransactionException If an error occurs while updating action authentication.
      */
     private void updateAuthentication(String actionId, Authentication updatingAuthentication, Integer tenantId)
-            throws TransactionException {
+            throws TransactionException, ActionMgtServerException {
 
-        Map<String, String> nonSecretAuthenticationProperties = updatingAuthentication.getProperties().stream()
+        Map<String, ActionPropertyForData> nonSecretAuthenticationProperties = updatingAuthentication.getProperties()
+                .stream()
                 .filter(property -> !property.getIsConfidential())
-                .collect(Collectors.toMap(AuthProperty::getName, AuthProperty::getValue));
+                .collect(Collectors.toMap(AuthProperty::getName, authProp ->
+                        new ActionPropertyForData(authProp.getValue())));
         // Update non-secret endpoint properties.
         updateActionPropertiesInDB(actionId, nonSecretAuthenticationProperties, tenantId);
     }
@@ -469,8 +512,8 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
             return;
         }
 
-        Map<String, String> propertiesMap =
-                Collections.singletonMap(RULE_PROPERTY, actionDTO.getActionRule().getId());
+        Map<String, ActionPropertyForData> propertiesMap =
+                Collections.singletonMap(RULE_PROPERTY, new ActionPropertyForData(actionDTO.getActionRule().getId()));
         try {
             addActionPropertiesToDB(actionDTO.getId(), propertiesMap, tenantId);
         } catch (TransactionException e) {
@@ -506,13 +549,13 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         }
     }
 
-    private ActionRule populateRule(Map<String, String> propertiesFromDB, Integer tenantId) {
+    private ActionRule populateRule(Map<String, ActionPropertyForData> propertiesFromDB, Integer tenantId) {
 
         if (!propertiesFromDB.containsKey(RULE_PROPERTY)) {
             return null;
         }
 
-        return ActionRule.create(propertiesFromDB.remove(RULE_PROPERTY),
+        return ActionRule.create(propertiesFromDB.remove(RULE_PROPERTY).getValue().toString(),
                 IdentityTenantUtil.getTenantDomain(tenantId));
     }
 
@@ -529,9 +572,15 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         if (propertiesMap == null || propertiesMap.isEmpty()) {
             return;
         }
-
-        Map<String, String> actionProperties = propertiesMap.entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> (String) entry.getValue()));
+        Map<String, ActionPropertyForData> actionProperties = new HashMap<>();
+        propertiesMap.forEach((key, value) -> {
+            if (value instanceof ActionPropertyForData) {
+                actionProperties.put(key, new ActionPropertyForData((InputStreamWrapper) ((ActionPropertyForData) value)
+                        .getValue()));
+            } else {
+                actionProperties.put(key, new ActionPropertyForData((String) value));
+            }
+        });
         try {
             addActionPropertiesToDB(actionDTO.getId(), actionProperties, tenantId);
         } catch (TransactionException e) {
@@ -555,8 +604,16 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
             return;
         }
 
-        Map<String, String> updatingProperties = propertiesMap.entrySet().stream()
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> (String) entry.getValue()));
+        Map<String, ActionPropertyForData> updatingProperties = new HashMap<>();
+        propertiesMap.forEach((key, value) -> {
+            if (value instanceof ActionPropertyForData) {
+                updatingProperties.put(key, new ActionPropertyForData((InputStreamWrapper) ((ActionPropertyForData)
+                        value).getValue()));
+            } else {
+                updatingProperties.put(key, new ActionPropertyForData((String) value));
+            }
+        });
+
         try {
             // Delete existing properties.
             deleteActionPropertiesInDB(updatingActionDTO.getId(),
@@ -576,33 +633,47 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
      * @param tenantId         Tenant ID.
      * @throws TransactionException If an error occurs while persisting action properties to the database.
      */
-    private void addActionPropertiesToDB(String actionId, Map<String, String> actionProperties, Integer tenantId)
-            throws TransactionException {
+    private void addActionPropertiesToDB(String actionId, Map<String, ActionPropertyForData> actionProperties,
+                                         Integer tenantId)
+            throws ActionMgtException, TransactionException {
 
         NamedJdbcTemplate jdbcTemplate = new NamedJdbcTemplate(IdentityDatabaseUtil.getDataSource());
         try {
-            boolean primitiveValueColumnExists  = isPrimitiveValueColumnExists();
-            String query = primitiveValueColumnExists ? ActionMgtSQLConstants.Query.ADD_ACTION_PROPERTIES
-                    : ActionMgtSQLConstants.Query.ADD_ACTION_PROPERTIES_WITH_PROPERTY_VALUE_COLUMN;
+            String query = ActionMgtSQLConstants.Query.ADD_ACTION_PROPERTIES;
             jdbcTemplate.withTransaction(template -> {
                 template.executeBatchInsert(query,
                         statement -> {
-                            for (Map.Entry<String, String> property : actionProperties.entrySet()) {
+                            for (Map.Entry<String, ActionPropertyForData> property : actionProperties.entrySet()) {
+                                boolean isPrimitive = property.getValue().isPrimitive();
                                 statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_UUID, actionId);
                                 statement.setInt(ActionMgtSQLConstants.Column.TENANT_ID, tenantId);
                                 statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_NAME,
                                         property.getKey());
-                                statement.setString(primitiveValueColumnExists ?
-                                                ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PRIMITIVE_VALUE :
-                                                ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_VALUE,
-                                        property.getValue());
+                                statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_TYPE,
+                                        property.getValue().getType().toString());
+                                statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PRIMITIVE_VALUE,
+                                        isPrimitive ?
+                                                property.getValue().getValue().toString() : null);
+                                if (isPrimitive) {
+                                    statement.setBinaryStream(ActionMgtSQLConstants.Column
+                                            .ACTION_PROPERTIES_OBJECT_VALUE, null, 0);
+                                } else {
+                                    try {
+                                        statement.setBinaryStream(ActionMgtSQLConstants.Column
+                                                        .ACTION_PROPERTIES_OBJECT_VALUE,
+                                                (InputStream) property.getValue().getValue(), ((InputStreamWrapper)
+                                                        property.getValue().getValue()).getLength());
+                                    } catch (IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }
                                 statement.addBatch();
                             }
                         }, null);
                 return null;
             });
-        } catch (SQLException e) {
-            throw new TransactionException("Error while adding Action Properties in the system.", e);
+        } catch (TransactionException e) {
+            throw new ActionMgtServerException("Error while adding Action Properties to the system.", e);
         }
     }
 
@@ -614,32 +685,37 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
      * @return A map of action properties, including any additional data based on action type.
      * @throws ActionMgtException If an error occurs while retrieving action properties from the database.
      */
-    private Map<String, String> getActionPropertiesFromDB(String actionId, Integer tenantId) throws ActionMgtException {
+    private Map<String, ActionPropertyForData> getActionPropertiesFromDB(String actionId, Integer tenantId)
+            throws ActionMgtException {
 
         NamedJdbcTemplate jdbcTemplate = new NamedJdbcTemplate(IdentityDatabaseUtil.getDataSource());
-        Map<String, String> actionEndpointProperties = new HashMap<>();
+        Map<String, ActionPropertyForData> actionEndpointProperties = new HashMap<>();
 
         try {
-            boolean primitiveValueColumnExists = isPrimitiveValueColumnExists();
-            String query = primitiveValueColumnExists ? ActionMgtSQLConstants.Query.GET_ACTION_PROPERTIES_INFO_BY_ID
-                    : ActionMgtSQLConstants.Query.GET_ACTION_PROPERTIES_INFO_BY_ID_WITH_PROPERTY_VALUE_COLUMN;
+            String query = ActionMgtSQLConstants.Query.GET_ACTION_PROPERTIES_INFO_BY_ID;
             jdbcTemplate.withTransaction(template ->
                 template.executeQuery(query,
                     (resultSet, rowNumber) -> {
-                        actionEndpointProperties.put(
-                                resultSet.getString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_NAME),
-                                resultSet.getString(primitiveValueColumnExists ?
-                                        ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PRIMITIVE_VALUE :
-                                        ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_VALUE));
+                        if (resultSet.getString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_TYPE)
+                                .equals(ActionProperty.Type.PRIMITIVE.toString())) {
+                            actionEndpointProperties.put(
+                                    resultSet.getString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_NAME),
+                                    new ActionPropertyForData(resultSet.getString(ActionMgtSQLConstants.Column
+                                            .ACTION_PROPERTIES_PRIMITIVE_VALUE)));
+                        } else {
+                            actionEndpointProperties.put(
+                                    resultSet.getString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_NAME),
+                                    new ActionPropertyForData(new InputStreamWrapper(resultSet.getBinaryStream(
+                                            ActionMgtSQLConstants.Column.ACTION_PROPERTIES_OBJECT_VALUE))));
+                        }
                         return null;
                     },
                     statement -> {
                         statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_UUID, actionId);
                         statement.setInt(ActionMgtSQLConstants.Column.TENANT_ID, tenantId);
                 }));
-
             return actionEndpointProperties;
-        } catch (TransactionException | SQLException e) {
+        } catch (Exception e) {
             throw new ActionMgtServerException("Error while retrieving Action Properties from the system.", e);
         }
     }
@@ -652,22 +728,35 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
      * @param tenantId           Tenant ID.
      * @throws TransactionException If an error occurs while updating the Action properties in the database.
      */
-    private void updateActionPropertiesInDB(String actionId, Map<String, String> updatingProperties,
-                                            Integer tenantId) throws TransactionException {
+    private void updateActionPropertiesInDB(String actionId, Map<String, ActionPropertyForData> updatingProperties,
+                                            Integer tenantId) throws TransactionException, ActionMgtServerException {
 
         NamedJdbcTemplate jdbcTemplate = new NamedJdbcTemplate(IdentityDatabaseUtil.getDataSource());
         try {
-            boolean primitiveValueColumnExists = isPrimitiveValueColumnExists();
-            String query = primitiveValueColumnExists ? ActionMgtSQLConstants.Query.UPDATE_ACTION_PROPERTY
-                    : ActionMgtSQLConstants.Query.UPDATE_ACTION_PROPERTY_WITH_PROPERTY_VALUE_COLUMN;
+            String query = ActionMgtSQLConstants.Query.UPDATE_ACTION_PROPERTY;
             jdbcTemplate.withTransaction(template ->
                     template.executeBatchInsert(query,
                             statement -> {
-                                for (Map.Entry<String, String> property : updatingProperties.entrySet()) {
-                                    statement.setString(primitiveValueColumnExists ?
-                                                    ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PRIMITIVE_VALUE :
-                                                    ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_VALUE,
-                                            property.getValue());
+                                for (Map.Entry<String, ActionPropertyForData> property : updatingProperties
+                                        .entrySet()) {
+                                    boolean isPrimitive = property.getValue().isPrimitive();
+                                    statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PRIMITIVE_VALUE,
+                                            isPrimitive ?
+                                                    property.getValue().getValue().toString() : null);
+                                    if (isPrimitive) {
+                                        statement.setBinaryStream(ActionMgtSQLConstants.Column
+                                                        .ACTION_PROPERTIES_OBJECT_VALUE,
+                                                null, 0);
+                                    } else {
+                                        try {
+                                            statement.setBinaryStream(ActionMgtSQLConstants.Column
+                                                            .ACTION_PROPERTIES_OBJECT_VALUE,
+                                                    (InputStream) property.getValue().getValue(), ((InputStreamWrapper)
+                                                            property.getValue().getValue()).getLength());
+                                        } catch (IOException e) {
+                                            throw new RuntimeException(e);
+                                        }
+                                    }
                                     statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_PROPERTY_NAME,
                                             property.getKey());
                                     statement.setString(ActionMgtSQLConstants.Column.ACTION_PROPERTIES_UUID, actionId);
@@ -675,8 +764,8 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
                                     statement.addBatch();
                                 }
                             }, null));
-        } catch (SQLException  e) {
-            throw new TransactionException("Error while updating Action Properties in the system.", e);
+        } catch (Exception  e) {
+            throw new ActionMgtServerException("Error while updating Action Properties in the system.", e);
         }
     }
 
@@ -738,20 +827,26 @@ public class ActionManagementDAOImpl implements ActionManagementDAO {
         }
     }
 
-    /**
-     * Check whether the PRITMITIVE_VALUE column exists in IDN_ACTION_PROPERTIES table.
-     * TODO: Remove this temporary method once the column name is changed.
-     *
-     * @return True if the column exists, False otherwise.
-     * @throws SQLException If an error occurs while checking the table existence.
-     */
-    private boolean isPrimitiveValueColumnExists() throws SQLException {
+    private List<String> getListValueFromInputStream(InputStream stream) {
 
-        try (Connection connection = IdentityDatabaseUtil.getDBConnection(false);
-             ResultSet resultSet = connection.getMetaData().getColumns(null, null,
-                     "IDN_ACTION_PROPERTIES", "PRIMITIVE_VALUE")) {
-            return resultSet.next();
+        if (stream == null) {
+            return null;
         }
-    }
 
+        StringBuilder sb = new StringBuilder();
+        List<String> objectValues;
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                sb.append(line);
+            }
+
+            ObjectMapper objectMapper = new ObjectMapper();
+            objectValues = objectMapper.readValue(sb.toString(), new TypeReference<List<String>>() { });
+        } catch (IOException e) {
+            throw new ActionMgtRuntimeException("Error while reading the object value content from storage.", e);
+        }
+
+        return objectValues;
+    }
 }
